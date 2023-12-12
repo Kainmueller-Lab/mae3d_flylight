@@ -33,6 +33,7 @@ from util.misc import NativeScalerWithGradNormCount as NativeScaler
 import models_mae
 
 from engine_pretrain import train_one_epoch
+from flylight_dataset import FlylightDataset
 
 
 def get_args_parser():
@@ -72,8 +73,10 @@ def get_args_parser():
                         help='epochs to warmup LR')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='/datasets01/imagenet_full_size/061417/', type=str,
-                        help='dataset path')
+    parser.add_argument('--data_path', 
+            default='/fast/AG_Kainmueller/data/flylight/flylight_unlabelled/all_cat_2_3', 
+            type=str,
+            help='dataset path')
 
     parser.add_argument('--output_dir', default='./output_dir',
                         help='path where to save, empty for no saving')
@@ -121,11 +124,14 @@ def main(args):
 
     # simple augmentation
     transform_train = transforms.Compose([
-            transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0), interpolation=3),  # 3 is bicubic
-            transforms.RandomHorizontalFlip(),
+            #transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0), 
+            #    interpolation=3),  # 3 is bicubic
+            #transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
-    dataset_train = datasets.ImageFolder(os.path.join(args.data_path, 'train'), transform=transform_train)
+            #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+    dataset_train = FlylightDataset(args.data_path, args.input_size, 
+        transform=transform_train)
     print(dataset_train)
 
     if True:  # args.distributed:
