@@ -16,6 +16,7 @@ import numpy as np
 import os
 import time
 from pathlib import Path
+import torch.multiprocessing as mp
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -122,6 +123,9 @@ def get_args_parser():
     parser.add_argument('--world_size', default=1, type=int,
                         help='number of distributed processes')
     parser.add_argument('--local_rank', default=-1, type=int)
+    parser.add_argument('--num_gpu', default=-1, type=int)
+    parser.add_argument('--rank', default=-1, type=int)
+    parser.add_argument('--node_id', default=-1, type=int)
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://',
                         help='url used to set up distributed training')
@@ -129,7 +133,10 @@ def get_args_parser():
     return parser
 
 
-def main(args):
+def main(rank, args):
+    os.environ["RANK"] = str(args.num_gpu * args.node_id + rank)
+    os.environ['WORLD_SIZE'] = str(args.world_size)
+    os.environ['LOCAL_RANK'] = str(rank)
     misc.init_distributed_mode(args)
 
     print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
@@ -176,15 +183,15 @@ def main(args):
     else:
         log_writer = None
 
-    data_loader_train = iter(torch.utils.data.DataLoader(
+    data_loader_train = torch.utils.data.DataLoader(
         dataset_train, sampler=sampler_train,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
-    ))
+    )
 
-    s = next(data_loader_train)
+    # s = next(data_loader_train)
 
     # define the model
     # model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
@@ -258,8 +265,63 @@ def main(args):
 
 
 if __name__ == '__main__':
+
+
+
+
     args = get_args_parser()
     args = args.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    main(args)
+
+
+    print(args.dist_url)
+    if "env" not in args.dist_url:
+        os.environ['MASTER_ADDR'],os.environ['MASTER_PORT'] = args.dist_url.split(":")
+        args.dist_url = None
+    else:
+        os.environ["MASTER_ADDR"] = "localhost"
+        os.environ["MASTER_PORT"] = "29500"
+
+
+    print(os.environ['MASTER_ADDR'],os.environ['MASTER_PORT'])
+
+    world_size = args.world_size
+    num_gpu = args.num_gpu
+    print(f"starting {num_gpu} jobs")
+    # logger.info(f"starting {world_size} jobs")
+    # logger.info('datetime: %s', datetime.now().strftime('%y%m%d_%H%M%S_%f'))
+    context = mp.spawn(
+        main,
+        args=(args,),
+        nprocs=num_gpu,
+        join=True)
+
+    # logger.info("trying to join")
+    # print("trying to join")
+    # joined = context.join()
+
+    # if not joined:
+    #     time.sleep(60)
+
+    # mtimes = []
+    # for i in range(world_size):
+    #     logfile = os.path.join(filebase, f'run{i}.log')
+    #     mtimes.append(os.path.getmtime(logfile))
+
+    # while not joined:
+    #     logger.info("trying to join")
+    #     print("trying to join")
+    #     joined = context.join(1020)
+    #     for i in range(world_size):
+    #         logfile = os.path.join(filebase, f'run{i}.log')
+    #         new_mtime = os.path.getmtime(logfile)
+    #         if new_mtime - mtimes[i] < 1:
+    #             logger.info(f"log file {i} not changed, crashed?")
+    #             print(f"log file {i} not changed, crashed?", new_mtime, mtimes[i])
+    #             logger.info('datetime: %s', datetime.now().strftime('%y%m%d_%H%M%S_%f'))
+    #             exit(11)
+
+    # logger.info('datetime: %s', datetime.now().strftime('%y%m%d_%H%M%S_%f'))
+
+    # main(args)
