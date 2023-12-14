@@ -11,6 +11,7 @@
 import argparse
 import datetime
 import json
+from functools import partial
 import numpy as np
 import os
 import time
@@ -51,6 +52,27 @@ def get_args_parser():
     parser.add_argument('--input_size', default=224, type=int,
                         help='images input size')
 
+    parser.add_argument('--patch_size', default=8, type=int,
+                        help='images patch size')
+
+    parser.add_argument('--embed_dim', default=1056, type=int,
+                        help='encoder embed dim')
+
+    parser.add_argument('--decoder_embed_dim', default=528, type=int,
+                        help='decoder embed dim')
+
+    parser.add_argument('--vit_depth', default=12, type=int,
+                        help='')
+
+    parser.add_argument('--vit_decoder_depth', default=8, type=int,
+                        help='')
+
+    parser.add_argument('--vit_num_heads', default=16, type=int,
+                        help='')
+
+    parser.add_argument('--vit_decoder_num_heads', default=16, type=int,
+                        help='')
+
     parser.add_argument('--mask_ratio', default=0.75, type=float,
                         help='Masking ratio (percentage of removed patches).')
 
@@ -74,7 +96,7 @@ def get_args_parser():
 
     # Dataset parameters
     parser.add_argument('--data_path', 
-            default='/fast/AG_Kainmueller/data/flylight/flylight_unlabelled/all_cat_2_3', 
+            default='/fast/AG_Kainmueller/data/flylight/flylight_unlabelled/all_cat_2_3',
             type=str,
             help='dataset path')
 
@@ -122,27 +144,31 @@ def main(args):
 
     cudnn.benchmark = True
 
-    # simple augmentation
-    transform_train = transforms.Compose([
-            #transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0), 
-            #    interpolation=3),  # 3 is bicubic
-            #transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-    dataset_train = FlylightDataset(args.data_path, args.input_size, 
-        transform=transform_train)
+    # # simple augmentation
+    # transform_train = transforms.Compose([
+    #         #transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0),
+    #         #    interpolation=3),  # 3 is bicubic
+    #         #transforms.RandomHorizontalFlip(),
+    #         transforms.ToTensor(),
+    #         #transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    #         ])
+    dataset_train = FlylightDataset(
+        args.data_path, args.input_size,
+        transform=None)
     print(dataset_train)
 
     if True:  # args.distributed:
         num_tasks = misc.get_world_size()
+        print("num tasks", num_tasks)
         global_rank = misc.get_rank()
+        print("global rank", global_rank)
         sampler_train = torch.utils.data.DistributedSampler(
             dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
         )
         print("Sampler_train = %s" % str(sampler_train))
     else:
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
+        global_rank = 0
 
     if global_rank == 0 and args.log_dir is not None:
         os.makedirs(args.log_dir, exist_ok=True)
@@ -150,16 +176,28 @@ def main(args):
     else:
         log_writer = None
 
-    data_loader_train = torch.utils.data.DataLoader(
+    data_loader_train = iter(torch.utils.data.DataLoader(
         dataset_train, sampler=sampler_train,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=True,
-    )
-    
+    ))
+
+    s = next(data_loader_train)
+
     # define the model
-    model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
+    # model = models_mae.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
+    model = models_mae.MaskedAutoencoderViT(
+        img_size=args.input_size,
+        patch_size=args.patch_size,
+        embed_dim=args.embed_dim,
+        depth=args.vit_depth,
+        num_heads=args.vit_num_heads,
+        decoder_embed_dim=args.decoder_embed_dim,
+        decoder_depth=args.vit_decoder_depth,
+        decoder_num_heads=args.vit_decoder_num_heads,
+        mlp_ratio=4, norm_layer=partial(torch.nn.LayerNorm, eps=1e-6))
 
     model.to(device)
 

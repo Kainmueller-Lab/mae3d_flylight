@@ -34,6 +34,8 @@ class MaskedAutoencoderViT(nn.Module):
         self.spatial_dims = spatial_dims
         self.embed_dim = embed_dim
         self.decoder_embed_dim = decoder_embed_dim
+        self.img_size = img_size
+        self.patch_size = patch_size
         # --------------------------------------------------------------------------
         # MAE encoder specifics
         self.patch_embed = PatchEmbeddingBlock(in_channels=in_chans,
@@ -91,18 +93,19 @@ class MaskedAutoencoderViT(nn.Module):
         #        self.decoder_pos_embed.shape[-1], 
         #        int(self.patch_embed.num_patches**.5), cls_token=True)
         grid_size = []
-        for in_size, pa_size in zip(img_size, patch_size):
-            grid_size.append(in_size // pa_size)
+        grid_size.append(self.img_size // self.patch_size)
+        grid_size.append(self.img_size // self.patch_size)
+        grid_size.append(self.img_size // self.patch_size)
         with torch.no_grad():
             pos_enc_emb = build_sincos_position_embedding(
-                    grid_size, self.embed_dim , self.spatial_dims)
-            pos_enc_emb = torch.concat([torch.zeros([1, self.embed_dim]), pos_enc_emb], dim=0)
-            self.pos_embed.data.copy(pos_enc_emb.float())
+                    grid_size, self.embed_dim , self.spatial_dims).squeeze(0)
+            pos_enc_emb = torch.concat([torch.zeros([1, self.embed_dim]), pos_enc_emb], dim=0).unsqueeze(0)
+            self.pos_embed.data.copy_(pos_enc_emb.float())
 
             pos_dec_emb = build_sincos_position_embedding(
-                    grid_size, self.decoder_embed_dim , self.spatial_dims)
+                    grid_size, self.decoder_embed_dim , self.spatial_dims).squeeze(0)
             pos_dec_emb = torch.concat([torch.zeros([1, self.decoder_embed_dim]),
-                pos_dec_emb], dim=0)
+                pos_dec_emb], dim=0).unsqueeze(0)
             self.decoder_pos_embed.data.copy_(pos_dec_emb.float())
 
         # initialize patch_embed like nn.Linear (instead of nn.Conv2d)
@@ -132,7 +135,7 @@ class MaskedAutoencoderViT(nn.Module):
         imgs: (N, 3, H, W, D)
         x: (N, L, patch_size**3 *3)
         """
-        p = self.patch_embed.patch_size[0]
+        p = self.patch_size
         assert imgs.shape[2] == imgs.shape[3] and imgs.shape[2] % p == 0
         assert imgs.shape[2] == imgs.shape[4]
 
@@ -147,7 +150,7 @@ class MaskedAutoencoderViT(nn.Module):
         x: (N, L, patch_size**3 *3)
         imgs: (N, 3, H, W, D)
         """
-        p = self.patch_embed.patch_size[0]
+        p = self.patch_size
         h = w = d = int(np.cbrt(x.shape[1]))
         assert h * w * d == x.shape[1]
         
@@ -188,7 +191,7 @@ class MaskedAutoencoderViT(nn.Module):
         x = self.patch_embed(x)
 
         # add pos embed w/o cls token -> already in self.patch_embed
-        #x = x + self.pos_embed[:, 1:, :]
+        x = x + self.pos_embed[:, 1:, :]
 
         # masking: length -> length * mask_ratio
         x, mask, ids_restore = self.random_masking(x, mask_ratio)
