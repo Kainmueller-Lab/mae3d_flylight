@@ -11,6 +11,7 @@
 
 from functools import partial
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -132,28 +133,27 @@ class MaskedAutoencoderViT(nn.Module):
 
     def patchify(self, imgs):
         """
-        imgs: (N, 3, H, W, D)
+        imgs: (N, 3, D, H, W)
         x: (N, L, patch_size**3 *3)
         """
         p = self.patch_size
-        assert imgs.shape[2] == imgs.shape[3] and imgs.shape[2] % p == 0
-        assert imgs.shape[2] == imgs.shape[4]
+        assert imgs.shape[-3] == imgs.shape[-2] == imgs.shape[-1] and imgs.shape[-1] % p == 0
 
-        h = w = d = imgs.shape[2] // p
+        d = h = w = imgs.shape[-1] // p
         x = imgs.reshape(shape=(imgs.shape[0], 3, d, p, h, p, w, p))
         x = torch.einsum('ncdrhpwq->ndhwrpqc', x)
-        x = x.reshape(shape=(imgs.shape[0], h * w * d, p**3 * 3))
+        x = x.reshape(shape=(imgs.shape[0], d * h * w, p**3 * 3))
         return x
 
     def unpatchify(self, x):
         """
         x: (N, L, patch_size**3 *3)
-        imgs: (N, 3, H, W, D)
+        imgs: (N, 3, D, H, W)
         """
         p = self.patch_size
-        h = w = d = int(np.cbrt(x.shape[1]))
-        assert h * w * d == x.shape[1]
-        
+        d = h = w = int(np.cbrt(x.shape[1]))
+        assert d * h * w == x.shape[1]
+
         x = x.reshape(shape=(x.shape[0], d, h, w, p, p, p, 3))
         x = torch.einsum('ndhwrpqc->ncdrhpwq', x)
         imgs = x.reshape(shape=(x.shape[0], 3, d * p, h * p, w * p))
@@ -167,9 +167,9 @@ class MaskedAutoencoderViT(nn.Module):
         """
         N, L, D = x.shape  # batch, length, dim
         len_keep = int(L * (1 - mask_ratio))
-        
+
         noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
-        
+
         # sort noise for each sample
         ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
         ids_restore = torch.argsort(ids_shuffle, dim=1)
@@ -238,9 +238,9 @@ class MaskedAutoencoderViT(nn.Module):
 
     def forward_loss(self, imgs, pred, mask):
         """
-        imgs: [N, 3, H, W]
-        pred: [N, L, p*p*3]
-        mask: [N, L], 0 is keep, 1 is remove, 
+        imgs: [N, 3, D, H, W]
+        pred: [N, L, p*p*p*3]
+        mask: [N, L], 0 is keep, 1 is remove,
         """
         target = self.patchify(imgs)
         if self.norm_pix_loss:
@@ -256,7 +256,7 @@ class MaskedAutoencoderViT(nn.Module):
 
     def forward(self, imgs, mask_ratio=0.75):
         latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
-        pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
+        pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*p*3]
         loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask
 
